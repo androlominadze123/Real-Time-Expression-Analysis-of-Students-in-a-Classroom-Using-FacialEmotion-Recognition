@@ -1,5 +1,4 @@
-# import the necessary packages
-from pyimagesearch.centroidtracker import CentroidTracker
+# import the necessary packfrom pyimagesearch.centroidtracker import CentroidTracker
 from imutils.video import VideoStream
 import numpy as np
 import argparse
