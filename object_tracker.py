@@ -1,7 +1,4 @@
 # import the necessary packages
-!pip install opencv-python
-!apt update && apt install -y libsm6 libxext6
-
 from pyimagesearch.centroidtracker import CentroidTracker
 from imutils.video import VideoStream
 import numpy as np
