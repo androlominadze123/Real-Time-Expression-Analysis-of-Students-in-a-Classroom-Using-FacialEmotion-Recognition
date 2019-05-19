@@ -22,9 +22,7 @@ import pandas as pd
 import threading
 from collections import Counter
 
-from PyQt5.QtWidgets import QApplication
-from models import Camera
-from views import StartWindow
+
 
 
 # construct the argument parse and parse the arguments
@@ -55,7 +53,7 @@ emotion_classifier = load_model(emotion_model_path)
 
 # getting input model shapes for inference
 emotion_target_size = emotion_classifier.input_shape[1:3]
-
+print('size',emotion_target_size)
 # starting lists for calculating modes
 emotion_window = []
 
@@ -72,6 +70,9 @@ time.sleep(2.0)
 detected_objects = {}
 face = {}
 
+# For averaging create a list
+emotion_list = []
+
 # starting video streaming
 
 cv2.namedWindow('window_frame', cv2.WINDOW_AUTOSIZE)
@@ -80,14 +81,25 @@ cv2.namedWindow('window_frame', cv2.WINDOW_AUTOSIZE)
 ###################################################################################################
 ###################################################################################################
 ##########################################################
-df = pd.DataFrame(columns=['faceID', 'Anger', 'Disgust', 'Fear',\
-					'Happiness', 'Neutral', 'Sadness', 'Surprised'])	
+df = pd.DataFrame(columns=['faceID','angry', 'disgust', 'fear', 'happy', 'sad',
+                'surprise', 'neutral'])
+
+meanDataFrame = pd.DataFrame(columns=['faceID', 'angry', 'disgust', 'fear', 'happy', 'sad',
+                'surprise', 'neutral'])					
+
+def averaging(iteration):
+	global meanDataFrame
+	data = pd.read_csv("rawData.csv", index_col=0)
+	meanDataFrame = meanDataFrame.append(data.groupby(['faceID']).mean())
+	#data = data.groupby(['faceID']).mean()
+	#print(meanDataFrame)
+	meanDataFrame.to_csv('averageData.csv')
+	
 
 # FUNCTION OF RECOGNITION
-
 def recognition(arguments):
 	global df
-	frame, rects, detected_objects, iteration, objectID = arguments
+	frame, rects, detected_objects, iteration, objectID, iteration = arguments
 	bgr_image = frame
 	gray_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
 	rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
@@ -98,41 +110,53 @@ def recognition(arguments):
 		x1, x2, y1, y2 = apply_offsets(face_coordinates, emotion_offsets)
 		gray_face = gray_image[y1:y2, x1:x2]
 		try:
-			gray_face = cv2.resize(gray_face, emotion_target_size)
+			gray_face = cv2.resize(gray_face, (emotion_target_size))
 		except:
 			continue
 
 		gray_face = preprocess_input(gray_face, True)
 		gray_face = np.expand_dims(gray_face, 0)
 		gray_face = np.expand_dims(gray_face, -1)
-		emotion_prediction = emotion_classifier.predict(gray_face)
-		
-		em_pre = emotion_prediction[0]
-		#em_pre = (em_pre-min(em_pre))/(max(em_pre)-min(em_pre))
-		#emp_pre = float(em_pre)
-		df = df.append({'faceID': objectID, 'Anger': em_pre[0], 'Disgust': em_pre[1], 'Fear': em_pre[2],\
-                      'Happiness': em_pre[3], 'Neutral': em_pre[4], 'Sadness': em_pre[5], 'Surprised': em_pre[6]},\
-                     ignore_index=True)
-		df.to_csv('rawData.csv')
+		emotion_prediction = emotion_classifier.predict(gray_face)		
 		emotion_probability = np.max(emotion_prediction)
 		emotion_label_arg = np.argmax(emotion_prediction)
 		emotion_text = emotion_labels[emotion_label_arg]
 		emotion_window.append(emotion_text)
-
+		
 		if len(emotion_window) > frame_window:
 			emotion_window.pop(0)
 		try:
 			emotion_mode = mode(emotion_window)
 		except:
 			continue
+			
+######################### add emotion to the list each time it appears
+		emotion_list.append(emotion_text)
+		emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
 		
-		detected_objects.setdefault(objectID, []).append(emotion_text)
+		#['angry', 'fear', 'happy', 'sad', 'surprise','neutral']
 		
-	bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
-	cv2.imshow('window_frame', bgr_image)
+		draw_text(face_coordinates, rgb_image, emotion_mode, 0, -45, 1, 1)
+#########################
+	detected_objects.setdefault(objectID, []).append(emotion_text)
 	
+	bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+	cv2.imshow('window_frame', bgr_image)	
 
+	em_pre = emotion_prediction[0]
+		
+	df = df.append({'faceID': objectID, 'angry': em_pre[0], 'disgust': em_pre[1], 'fear': em_pre[2],\
+                      'happy': em_pre[3], 'sad': em_pre[4], 'surprise': em_pre[5],\
+					  'neutral': em_pre[6]}, ignore_index=True)
+					 
+	df.to_csv('rawData.csv')
+		
+	if iteration % 30 == 0:
+		averaging(iteration)
+		
 # END OF THE RECOGNITION FUNCTION
+
+
 iteration = 1
 # loop over the frames from the video stream
 while True:
@@ -183,15 +207,15 @@ while True:
 			cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 		cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
 		
-		arguments = frame, rects, detected_objects, iteration , objectID
+		arguments = frame, rects, detected_objects, iteration , objectID, iteration
 				
 		recognition(arguments)
-		
+			
 ##########	
 	iteration +=1
 ###########
 	if cv2.waitKey(1) & 0xFF == ord('q'):
-			break
+		break
 			
 print ("HERE IS THE LAST LINE")
 
@@ -199,4 +223,5 @@ print ("HERE IS THE LAST LINE")
 # do a bit of cleanup
 cv2.destroyAllWindows()
 vs.stop()
+
 
