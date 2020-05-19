@@ -22,7 +22,10 @@ import pandas as pd
 import threading
 from collections import Counter
 
+from decimal import Decimal
 
+import os
+import glob
 
 
 # construct the argument parse and parse the arguments
@@ -31,8 +34,10 @@ ap.add_argument("-p", "--prototxt", default = "deploy.prototxt",
 	help="path to Caffe 'deploy' prototxt file")
 ap.add_argument("-m", "--model", default="res10_300x300_ssd_iter_140000.caffemodel",
 	help="path to Caffe pre-trained model")
-ap.add_argument("-c", "--confidence", type=float, default=0.5,
+ap.add_argument("-c", "--confidence", type=float, default=0.7,
 	help="minimum probability to filter weak detections")
+ap.add_argument("-d", "--dataset", type = str,
+	help="choose between FER213 and KDEF datasets")
 args = vars(ap.parse_args())
 
 # initialize our centroid tracker and frame dimensions
@@ -41,8 +46,10 @@ ct = CentroidTracker()
 
 # parameters for loading data and images
 emotion_model_path = './models/emotion_model.hdf5'
-emotion_labels = get_labels('fer2013')
-
+#emotion_labels = get_labels('fer2013')
+#emotion_labels = get_labels('KDEF')
+emotion_labels = args["dataset"]
+print("emotion labels", emotion_labels)
 # hyper-parameters for bounding boxes shape
 frame_window = 10
 emotion_offsets = (20, 40)
@@ -76,91 +83,108 @@ emotion_list = []
 # starting video streaming
 
 cv2.namedWindow('window_frame', cv2.WINDOW_AUTOSIZE)
-#cv2.createTrackbar('just slider', 'window_frame', 0, 10, callback)
 
-###################################################################################################
-###################################################################################################
-##########################################################
+
+
 df = pd.DataFrame(columns=['faceID','angry', 'disgust', 'fear', 'happy', 'sad',
-                'surprise', 'neutral'])
+                'surprise', 'neutral', 'max_emotion'])
 
 meanDataFrame = pd.DataFrame(columns=['faceID', 'angry', 'disgust', 'fear', 'happy', 'sad',
-                'surprise', 'neutral'])					
+                'surprise', 'neutral'])
 
+
+def sorting():
+	dataToSort = pd.read_csv("rawData.csv", index_col=0)
+	sorted = dataToSort.sort_values(by=['faceID'])
+	sorted.to_csv('sorted.csv')
 def averaging(iteration):
-	global meanDataFrame
+	#global meanDataFrame
+
 	data = pd.read_csv("rawData.csv", index_col=0)
-	meanDataFrame = meanDataFrame.append(data.groupby(['faceID']).mean())
-	#data = data.groupby(['faceID']).mean()
-	#print(meanDataFrame)
-	meanDataFrame.to_csv('averageData.csv')
+	mean = np.mean(data.drop(['faceID', 'max_emotion'], axis = 1), axis = 0)
+	max  = np.argmax(mean)
 	
+
+	mean.to_csv('averageData.csv')
+
+
 
 # FUNCTION OF RECOGNITION
 def recognition(arguments):
+	
 	global df
-	frame, rects, detected_objects, iteration, objectID, iteration = arguments
+	frame, rects, detected_objects, iteration, objectID, centr = arguments
+	
 	bgr_image = frame
 	gray_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2GRAY)
 	rgb_image = cv2.cvtColor(bgr_image, cv2.COLOR_BGR2RGB)
-
-	faces = rects
-	for face_coordinates in faces:
-
-		x1, x2, y1, y2 = apply_offsets(face_coordinates, emotion_offsets)
-		gray_face = gray_image[y1:y2, x1:x2]
-		try:
-			gray_face = cv2.resize(gray_face, (emotion_target_size))
-		except:
-			continue
-
-		gray_face = preprocess_input(gray_face, True)
-		gray_face = np.expand_dims(gray_face, 0)
-		gray_face = np.expand_dims(gray_face, -1)
-		emotion_prediction = emotion_classifier.predict(gray_face)		
-		emotion_probability = np.max(emotion_prediction)
-		emotion_label_arg = np.argmax(emotion_prediction)
-		emotion_text = emotion_labels[emotion_label_arg]
-		emotion_window.append(emotion_text)
-		
-		if len(emotion_window) > frame_window:
-			emotion_window.pop(0)
-		try:
-			emotion_mode = mode(emotion_window)
-		except:
-			continue
-			
-######################### add emotion to the list each time it appears
-		emotion_list.append(emotion_text)
-		emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
-		
-		#['angry', 'fear', 'happy', 'sad', 'surprise','neutral']
-		
-		draw_text(face_coordinates, rgb_image, emotion_mode, 0, -45, 1, 1)
-#########################
-	detected_objects.setdefault(objectID, []).append(emotion_text)
 	
-	bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
-	cv2.imshow('window_frame', bgr_image)	
-
-	em_pre = emotion_prediction[0]
+	face_coordinates = rects
 		
+	x1, x2, y1, y2 = apply_offsets(face_coordinates, emotion_offsets)
+	
+	#crop faces from image
+	gray_face = gray_image[y1:y2, x1:x2]
+	
+	#resize the face image to desired size
+	gray_face = cv2.resize(gray_face, (emotion_target_size))
+	
+	resized = gray_face
+	#cv2.imwrite("dataset/User." + str(objectID) + '.' + str(iteration) + ".jpg", resized)
+	
+	# emotion prediction
+	gray_face = preprocess_input(gray_face, True)
+	gray_face = np.expand_dims(gray_face, 0)
+	gray_face = np.expand_dims(gray_face, -1)
+	emotion_prediction = emotion_classifier.predict(gray_face)
+	emotion_probability = np.max(emotion_prediction)
+	emotion_label_arg = np.argmax(emotion_prediction)
+	
+	emotions = ['angry', 'disgust', 'fear', 'happy', 'sad', 'surprise', 'neutral']
+
+	bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
+	
+	print('centroid:', centr)
+	######################################## EMOTION PUT ON SCREEN
+	emo = emotion_prediction
+	emo_txt = (f"angry: {str(round(emo[0][0],4))}\n"
+					f"disgust: {str(round(emo[0][1],4))}\n"
+					f"fear: {str(round(emo[0][2],4))}\n"
+					f"happy: {str(round(emo[0][3],4))}\n"
+					f"sad: {str(round(emo[0][4],4))}\n"
+					f"surprise: {str(round(emo[0][5],4))}\n"
+					f"neutral: {str(round(emo[0][6],4))}\n")
+			
+	for i, line in enumerate(emo_txt.split('\n')):
+		cv2.putText(bgr_image, line, (centr[0] + 35, centr[1] + i * 15),
+			cv2.FONT_HERSHEY_COMPLEX_SMALL, 0.6, (0, 0, 255), 1)
+
+	
+	###############################################
+	cv2.imshow('window_frame', bgr_image)
+	em_pre = emotion_prediction[0]
+	
+	
+	# save the predicted probabilities for each face	
 	df = df.append({'faceID': objectID, 'angry': em_pre[0], 'disgust': em_pre[1], 'fear': em_pre[2],\
                       'happy': em_pre[3], 'sad': em_pre[4], 'surprise': em_pre[5],\
-					  'neutral': em_pre[6]}, ignore_index=True)
-					 
+					  'neutral': em_pre[6], 'max_emotion': emotions[emotion_label_arg]}, ignore_index=True)
+
 	df.to_csv('rawData.csv')
-		
-	if iteration % 30 == 0:
-		averaging(iteration)
-		
+
+	# sort the predictions by face_ID
+	sorted = sorting()
+	# average all the emotions to get overall mood
+	average_emotion = averaging(iteration)	
+	
 # END OF THE RECOGNITION FUNCTION
-
-
+	
+	
 iteration = 1
 # loop over the frames from the video stream
 while True:
-	
+	print("frame #\n:",iteration)
+
 	# read the next frame from the video stream and resize it
 	frame = vs.read()
 	frame = imutils.resize(frame, width=400)
@@ -197,30 +221,33 @@ while True:
 	# update our centroid tracker using the computed set of bounding
 	# box rectangles
 	objects = ct.update(rects)
+	
+	print('objects:', objects)
+	print('rects:', rects)
 	#print('objects.items', objects.items())
 	# loop over the tracked objects
 	for (objectID, centroid) in objects.items():
+		
 		# draw both the ID of the object and the centroid of the
 		# object on the output frame
 		text = "ID {}".format(objectID)
-		cv2.putText(frame, text, (centroid[0] - 10, centroid[1] - 10),
-			cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-		cv2.circle(frame, (centroid[0], centroid[1]), 4, (0, 255, 0), -1)
-		
-		arguments = frame, rects, detected_objects, iteration , objectID, iteration
-				
-		recognition(arguments)
+	
+		try:			
+			arguments = frame, rects[objectID], detected_objects, iteration , objectID, centroid
+		except:
+			continue
 			
-##########	
+		recognition(arguments)
+		
+		
+				
 	iteration +=1
-###########
+
 	if cv2.waitKey(1) & 0xFF == ord('q'):
 		break
-			
+
 print ("HERE IS THE LAST LINE")
 
-
-# do a bit of cleanup
 cv2.destroyAllWindows()
 vs.stop()
 

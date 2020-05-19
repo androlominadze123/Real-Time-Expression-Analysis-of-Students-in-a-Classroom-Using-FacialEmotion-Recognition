@@ -21,7 +21,9 @@ def draw_bounding_box(face_coordinates, image_array, color):
 def apply_offsets(face_coordinates, offsets):
     x, y, width, height = face_coordinates
     x_off, y_off = offsets
-    return (x - x_off, x + width + x_off, y - y_off, y + height + y_off)
+    return (x, width, y, height)
+	
+#return (x - x_off, x + width + x_off, y - y_off, y + height + y_off)
 
 def draw_text(coordinates, image_array, text, color, x_offset=0, y_offset=0,
                                                 font_scale=2, thickness=2):
